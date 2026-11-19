@@ -31,6 +31,67 @@ class StudentDirectoryTests(TestCase):
 
         self.assertRedirects(response, reverse('student_registration'))
 
+    def test_dashboard_summaries_cover_all_students_when_report_is_searched(self):
+        female_student = Student.objects.create(
+            student_id='SRCC-TEST-002',
+            first_name='Jamie',
+            last_name='Reyes',
+            gender='Female',
+            date_of_birth='2003-11-08',
+            contact_no='09170000002',
+        )
+        Student.objects.create(
+            student_id='SRCC-TEST-003',
+            first_name='Casey',
+            last_name='Morgan',
+            gender='Male',
+            date_of_birth='2002-06-12',
+            contact_no='09170000003',
+        )
+
+        response = self.client.get(
+            reverse('staff_dashboard'),
+            {'q': 'jAmIe'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_students'], 3)
+        self.assertEqual(response.context['male_students'], 2)
+        self.assertEqual(response.context['female_students'], 1)
+        self.assertAlmostEqual(response.context['male_percent'], 2 / 3 * 100)
+        self.assertAlmostEqual(response.context['female_percent'], 1 / 3 * 100)
+        self.assertEqual(list(response.context['students']), [female_student])
+        self.assertEqual(response.context['query'], 'jAmIe')
+        self.assertContains(response, 'Student Report')
+        self.assertContains(response, 'Contact No.')
+
+    def test_dashboard_percentages_are_zero_when_there_are_no_students(self):
+        Student.objects.all().delete()
+
+        response = self.client.get(reverse('staff_dashboard'))
+
+        self.assertEqual(response.context['total_students'], 0)
+        self.assertEqual(response.context['male_percent'], 0)
+        self.assertEqual(response.context['female_percent'], 0)
+        self.assertContains(response, 'No student records found.')
+
+    def test_public_registration_shows_validation_error_for_duplicate_student_id(self):
+        response = self.client.post(
+            reverse('student_registration'),
+            {
+                'student_id': self.student.student_id,
+                'first_name': 'Alex',
+                'last_name': 'Santos',
+                'gender': 'Male',
+                'date_of_birth': '2004-02-15',
+                'contact_no': '09170000001',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('student_id', response.context['form'].errors)
+        self.assertEqual(Student.objects.count(), 1)
+
     def test_directory_search_matches_student_id_and_names(self):
         response = self.client.get(reverse('student_list'), {'q': 'sAnToS'})
 
@@ -52,6 +113,12 @@ class StudentDirectoryTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, self.student.contact_no)
+        self.assertContains(
+            response,
+            f'action="{reverse("logout")}"',
+        )
+        self.assertContains(response, 'method="post"')
+        self.assertContains(response, 'csrfmiddlewaretoken')
         self.assertEqual(
             self.client.get(reverse('student_detail', args=[99999])).status_code,
             404,
@@ -158,7 +225,8 @@ class AuthenticationTests(TestCase):
 
         self.assertRedirects(response, reverse('staff_dashboard'))
         self.assertContains(response, 'Welcome, staff_user!')
-        self.assertContains(response, reverse('student_list'))
+        self.assertNotContains(response, 'Open Student Directory')
+        self.assertContains(response, 'Log Out')
 
     def test_invalid_login_shows_error(self):
         response = self.client.post(
